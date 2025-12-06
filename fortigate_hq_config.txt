@@ -1,0 +1,163 @@
+# FortiGate HQ (FG-60F) Simulated Configuration
+
+## 1. System and Interface Configuration
+config system global
+    set hostname "FG-HQ"
+end
+
+config system interface
+    # WAN Interface (Connects to ISP)
+    edit "wan1"
+        set vdom "root"
+        set ip 203.0.113.1 255.255.255.0
+        set allowaccess ping https ssh http fgfm
+        set role wan
+    next
+
+    # Internal Interface (Connects to Switch)
+    edit "internal"
+        set vdom "root"
+        set ip 192.168.10.1 255.255.255.240 # Management VLAN 10
+        set allowaccess ping https ssh http fgfm
+        set role lan
+        set secondary-IP enable
+        # Secondary IP for VLAN 20 (Users/Data)
+        config secondaryip
+            edit 1
+                set ip 192.168.20.1 255.255.255.0
+                set allowaccess ping https ssh http
+            next
+        end
+        # Secondary IP for VLAN 30 (Guest/IoT)
+        config secondaryip
+            edit 2
+                set ip 192.168.30.1 255.255.255.0
+                set allowaccess ping http
+            next
+        end
+    next
+end
+
+## 2. Static Route (Default Route to Internet)
+config router static
+    edit 1
+        set device "wan1"
+        set gateway 203.0.113.254 # Assuming ISP Gateway
+    next
+end
+
+## 3. IPsec VPN Tunnel (Phase 1 - IKE Gateway)
+config vpn ipsec phase1-interface
+    edit "VPN-to-RO"
+        set interface "wan1"
+        set keylife 86400
+        set peertype any
+        set net-device disable
+        set proposal aes256-sha256
+        set remote-gw 198.51.100.1 # RO Public IP
+        set psksecret ENC XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+        set dpd on-idle
+    next
+end
+
+## 4. IPsec VPN Tunnel (Phase 2 - IPsec Tunnel)
+config vpn ipsec phase2-interface
+    edit "VPN-to-RO-P2"
+        set phase1name "VPN-to-RO"
+        set proposal aes256-sha256
+        set keylifeseconds 3600
+        set src-addr-type name
+        set dst-addr-type name
+        set src-subnet 192.168.10.0 255.255.255.240 # HQ Networks
+        set src-subnet 192.168.20.0 255.255.255.0
+        set dst-subnet 192.168.40.0 255.255.255.0 # RO Network
+    next
+end
+
+## 5. Firewall Address Objects (For Policy Creation)
+config firewall address
+    edit "HQ_MGMT_NET"
+        set subnet 192.168.10.0 255.255.255.240
+    next
+    edit "HQ_USER_NET"
+        set subnet 192.168.20.0 255.255.255.0
+    next
+    edit "HQ_GUEST_NET"
+        set subnet 192.168.30.0 255.255.255.0
+    next
+    edit "RO_USER_NET"
+        set subnet 192.168.40.0 255.255.255.0
+    next
+end
+
+## 6. Firewall Policy (Inter-Branch Communication)
+config firewall policy
+    # Policy 1: HQ to RO VPN Traffic
+    edit 1
+        set name "HQ-to-RO-VPN"
+        set srcintf "internal"
+        set dstintf "VPN-to-RO"
+        set srcaddr "HQ_USER_NET" "HQ_MGMT_NET"
+        set dstaddr "RO_USER_NET"
+        set action accept
+        set service "ALL"
+        set nat disable
+    next
+
+    # Policy 2: RO to HQ VPN Traffic (Return traffic handled by RO policy, but explicit is better)
+    edit 2
+        set name "RO-to-HQ-VPN-Return"
+        set srcintf "VPN-to-RO"
+        set dstintf "internal"
+        set srcaddr "RO_USER_NET"
+        set dstaddr "HQ_USER_NET" "HQ_MGMT_NET"
+        set action accept
+        set service "ALL"
+        set nat disable
+    next
+
+    # Policy 3: HQ Internal Networks to Internet (Users/Management)
+    edit 3
+        set name "HQ-Internal-to-WAN"
+        set srcintf "internal"
+        set dstintf "wan1"
+        set srcaddr "HQ_USER_NET" "HQ_MGMT_NET"
+        set dstaddr "all"
+        set action accept
+        set service "HTTP" "HTTPS" "DNS"
+        set utm-status enable
+        set profile-protocol-options "default"
+        set ips-sensor "default"
+        set av-profile "default"
+        set webfilter-profile "default"
+        set application-list "default"
+        set nat enable
+    next
+
+    # Policy 4: HQ Guest Network to Internet (Strictly filtered)
+    edit 4
+        set name "HQ-Guest-to-WAN"
+        set srcintf "internal"
+        set dstintf "wan1"
+        set srcaddr "HQ_GUEST_NET"
+        set dstaddr "all"
+        set action accept
+        set service "HTTP" "HTTPS" "DNS"
+        set utm-status enable
+        set webfilter-profile "strict-guest-filter" # Custom strict profile
+        set nat enable
+    next
+
+    # Policy 5: Inter-VLAN Deny (Example: Guest cannot talk to User/Management)
+    edit 5
+        set name "HQ-Guest-to-Internal-DENY"
+        set srcintf "internal"
+        set dstintf "internal"
+        set srcaddr "HQ_GUEST_NET"
+        set dstaddr "HQ_USER_NET" "HQ_MGMT_NET"
+        set action deny
+        set service "ALL"
+    next
+
+    # Implicit Deny All at the end (Best Practice)
+end
