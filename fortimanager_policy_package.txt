@@ -1,0 +1,94 @@
+# FortiManager Simulated Policy Package Configuration
+
+## Policy Package: GreenTech_Security_Policy
+
+This simulated configuration demonstrates how FortiManager centralizes the management of common policies across both FortiGate devices (FG-HQ and FG-RO).
+
+### 1. Common Firewall Address Objects (Shared across all devices)
+config firewall address
+    edit "HQ_MGMT_NET"
+        set subnet 192.168.10.0 255.255.255.240
+    next
+    edit "HQ_USER_NET"
+        set subnet 192.168.20.0 255.255.255.0
+    next
+    edit "HQ_GUEST_NET"
+        set subnet 192.168.30.0 255.255.255.0
+    next
+    edit "RO_USER_NET"
+        set subnet 192.168.40.0 255.255.255.0
+    next
+end
+
+### 2. Common Security Profiles (Applied to all outbound internet traffic)
+# FortiManager ensures that the same UTP profiles are used for consistency.
+config firewall profile-protocol-options
+    edit "default"
+        # ... (standard protocol options)
+    next
+end
+
+config ips sensor
+    edit "default"
+        # ... (standard IPS settings)
+    next
+end
+
+config antivirus profile
+    edit "default"
+        # ... (standard AV settings)
+    next
+end
+
+config webfilter profile
+    edit "default"
+        # ... (standard web filtering settings for employees)
+    next
+    edit "strict-guest-filter"
+        # ... (more restrictive web filtering settings for guests)
+    next
+end
+
+### 3. Common Internet Access Policy (Installed on both FG-HQ and FG-RO)
+
+This policy is created once in FortiManager and installed on both devices. FortiManager automatically handles the device-specific interface mapping (e.g., 'internal' to 'wan1').
+
+config firewall policy
+    # Policy 1: Internal Networks to Internet
+    edit 1
+        set name "Internal-to-WAN-Standard"
+        # Source Interface: internal (Mapped by FortiManager to the correct internal interface on each device)
+        # Destination Interface: wan1 (Mapped by FortiManager to the correct WAN interface on each device)
+        set srcaddr "HQ_USER_NET" "RO_USER_NET" # FortiManager allows using multiple address objects
+        set dstaddr "all"
+        set action accept
+        set service "HTTP" "HTTPS" "DNS"
+        set utm-status enable
+        set ips-sensor "default"
+        set av-profile "default"
+        set webfilter-profile "default"
+        set nat enable
+    next
+end
+
+### 4. Device-Specific Policies (Managed within the same package, but applied only to one device)
+
+# The VPN policies and the HQ-specific Guest policy would be managed as device-specific policies within the FortiManager policy package, ensuring the central view while maintaining necessary differences.
+
+# Example: HQ-Specific Guest Policy
+config firewall policy
+    # Policy 2: HQ Guest Network to Internet (Only installed on FG-HQ)
+    edit 2
+        set name "HQ-Guest-to-WAN"
+        set srcaddr "HQ_GUEST_NET"
+        set dstaddr "all"
+        set action accept
+        set service "HTTP" "HTTPS" "DNS"
+        set utm-status enable
+        set webfilter-profile "strict-guest-filter"
+        set nat enable
+        # Installation Target: FG-HQ only
+    next
+end
+
+# FortiManager's primary benefit is the ability to create a single, unified policy set and apply it consistently, reducing human error and ensuring compliance across the entire security fabric.
