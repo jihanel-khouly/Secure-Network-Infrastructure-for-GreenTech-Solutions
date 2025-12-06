@@ -1,0 +1,120 @@
+# FortiGate Remote Office (FG-60F) Simulated Configuration
+
+## 1. System and Interface Configuration
+config system global
+    set hostname "FG-RO"
+end
+
+config system interface
+    # WAN Interface (Connects to ISP)
+    edit "wan1"
+        set vdom "root"
+        set ip 198.51.100.1 255.255.255.0
+        set allowaccess ping https ssh http fgfm
+        set role wan
+    next
+
+    # Internal Interface (Connects to Switch)
+    edit "internal"
+        set vdom "root"
+        set ip 192.168.40.1 255.255.255.0 # RO Users/Data VLAN 40
+        set allowaccess ping https ssh http fgfm
+        set role lan
+    next
+end
+
+## 2. Static Route (Default Route to Internet)
+config router static
+    edit 1
+        set device "wan1"
+        set gateway 198.51.100.254 # Assuming ISP Gateway
+    next
+end
+
+## 3. IPsec VPN Tunnel (Phase 1 - IKE Gateway)
+config vpn ipsec phase1-interface
+    edit "VPN-to-HQ"
+        set interface "wan1"
+        set keylife 86400
+        set peertype any
+        set net-device disable
+        set proposal aes256-sha256
+        set remote-gw 203.0.113.1 # HQ Public IP
+        set psksecret ENC XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+        set dpd on-idle
+    next
+end
+
+## 4. IPsec VPN Tunnel (Phase 2 - IPsec Tunnel)
+config vpn ipsec phase2-interface
+    edit "VPN-to-HQ-P2"
+        set phase1name "VPN-to-HQ"
+        set proposal aes256-sha256
+        set keylifeseconds 3600
+        set src-addr-type name
+        set dst-addr-type name
+        set src-subnet 192.168.40.0 255.255.255.0 # RO Network
+        set dst-subnet 192.168.10.0 255.255.255.240 # HQ Networks
+        set dst-subnet 192.168.20.0 255.255.255.0
+    next
+end
+
+## 5. Firewall Address Objects (For Policy Creation)
+config firewall address
+    edit "HQ_MGMT_NET"
+        set subnet 192.168.10.0 255.255.255.240
+    next
+    edit "HQ_USER_NET"
+        set subnet 192.168.20.0 255.255.255.0
+    next
+    edit "RO_USER_NET"
+        set subnet 192.168.40.0 255.255.255.0
+    next
+end
+
+## 6. Firewall Policy (Inter-Branch Communication)
+config firewall policy
+    # Policy 1: RO to HQ VPN Traffic
+    edit 1
+        set name "RO-to-HQ-VPN"
+        set srcintf "internal"
+        set dstintf "VPN-to-HQ"
+        set srcaddr "RO_USER_NET"
+        set dstaddr "HQ_USER_NET" "HQ_MGMT_NET"
+        set action accept
+        set service "ALL"
+        set nat disable
+    next
+
+    # Policy 2: HQ to RO VPN Traffic (Return traffic handled by HQ policy, but explicit is better)
+    edit 2
+        set name "HQ-to-RO-VPN-Return"
+        set srcintf "VPN-to-HQ"
+        set dstintf "internal"
+        set srcaddr "HQ_USER_NET" "HQ_MGMT_NET"
+        set dstaddr "RO_USER_NET"
+        set action accept
+        set service "ALL"
+        set nat disable
+    next
+
+    # Policy 3: RO Internal Network to Internet
+    edit 3
+        set name "RO-Internal-to-WAN"
+        set srcintf "internal"
+        set dstintf "wan1"
+        set srcaddr "RO_USER_NET"
+        set dstaddr "all"
+        set action accept
+        set service "HTTP" "HTTPS" "DNS"
+        set utm-status enable
+        set profile-protocol-options "default"
+        set ips-sensor "default"
+        set av-profile "default"
+        set webfilter-profile "default"
+        set application-list "default"
+        set nat enable
+    next
+
+    # Implicit Deny All at the end (Best Practice)
+end
